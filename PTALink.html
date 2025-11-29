@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>JSON → Markdown 链接生成器</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;margin:0;padding:2rem;background:#f7f7f7;color:#333}
+  h1{margin-top:0}
+  textarea{width:100%;min-height:180px;font-family:monospace;font-size:14px;padding:.5rem;border:1px solid #bbb;border-radius:4px;resize:vertical}
+  .row{margin:.8rem 0}
+  label{font-weight:600;margin-right:.5rem}
+  button{background:#0969da;color:#fff;border:none;padding:.5rem 1.1rem;border-radius:4px;cursor:pointer;font-size:15px}
+  button:hover{background:#0550aa}
+  pre{background:#fff;border:1px solid #ddd;padding:1rem;border-radius:4px;white-space:pre-wrap;word-break:break-all}
+  .error{color:#d32f2f}
+</style>
+</head>
+<body>
+
+<h1>JSON → Markdown 链接生成器</h1>
+
+<div class="row">
+  <label>1. 将 JSON 粘到下方：</label>
+  <textarea id="jsonInput" placeholder='[{"id":"xxx","title":"xxx","problemSetId":"xxx","type":"CODE_COMPLETION"}, ...]'></textarea>
+</div>
+
+<div class="row">
+  <label>2. 选择要输出的题目类型：</label>
+  <select id="typeSel">
+    <option value="6">6 代码补全</option>
+    <option value="7">7 编程题</option>
+  </select>
+</div>
+
+<div class="row">
+  <button id="genBtn">3. 生成 Markdown 链接</button>
+</div>
+
+<div class="row">
+  <label>4. 结果（自动复制到剪贴板）：</label>
+  <pre id="output"></pre>
+</div>
+
+<script>
+const PREFIX = 'https://pintia.cn/problem-sets';
+
+document.getElementById('genBtn').addEventListener('click', () => {
+  const raw = document.getElementById('jsonInput').value.trim();
+  const type = document.getElementById('typeSel').value;
+  const outEl = document.getElementById('output');
+  if (!raw) { outEl.textContent = '请先粘贴 JSON！'; return; }
+
+  let data;
+  try { data = JSON.parse(raw); }
+  catch(e) { outEl.textContent = 'JSON 解析失败：' + e.message; outEl.classList.add('error'); return; }
+
+  if (!Array.isArray(data)) { outEl.textContent = 'JSON 必须是数组！'; outEl.classList.add('error'); return; }
+
+  const lines = data.map(item => {
+    const { id, title, problemSetId } = item;
+    if (!id || !title || !problemSetId) return null;
+    return `- [${title}](${PREFIX}/${problemSetId}/exam/problems/type/${type}?problemSetProblemId=${id})`;
+  }).filter(Boolean);
+
+  if (!lines.length) { outEl.textContent = '未找到有效题目数据！'; outEl.classList.add('error'); return; }
+
+  const markdown = lines.join('\n');
+  outEl.textContent = markdown;
+  outEl.classList.remove('error');
+
+  /* 自动复制 */
+  navigator.clipboard.writeText(markdown).then(() => {
+    outEl.textContent += '\n\n（已复制到剪贴板）';
+  }).catch(() => {});
+});
+</script>
+</body>
+</html>
