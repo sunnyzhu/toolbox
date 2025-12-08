@@ -114,7 +114,6 @@ async function extractPTAData() {
                 } else {
                     // 如果是普通文本
                     return part
-                        .replace(/\*/g, '\\*')     // 仅在普通文本中转义星号
                         .replace(/\n+/g, '\n');  // 仅在普通文本中合并空行
                 }
             });
