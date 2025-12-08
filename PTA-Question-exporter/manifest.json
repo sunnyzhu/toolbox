@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "PTA Markdown Exporter",
+  "version": "1.0",
+  "description": "提取PTA题目和代码为Markdown格式",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://pintia.cn/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
