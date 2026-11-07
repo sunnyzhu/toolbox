@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>G3 移动端战局可视化系统</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vis.js Network -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- XLSX library for parsing user excel uploads -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#090d16',
+                        cardbg: '#131b2e',
+                        borderbg: '#1e293b'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body, html {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #090d16;
+            color: #f8fafc;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #mynetwork {
+            width: 100%;
+            height: 100%;
+            background-color: #070a12;
+        }
+
+        /* Mobile touch button base styles (minimum 44x44px target size) */
+        .touch-btn {
+            min-width: 44px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Bottom Sheet sliding transitions */
+        .bottom-sheet {
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .bottom-sheet.collapsed {
+            transform: translateY(calc(100% - 64px));
+        }
+        .bottom-sheet.closed {
+            transform: translateY(100%);
+        }
+
+        /* Scrollbar styles */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen text-slate-200 select-none overflow-hidden">
+
+    <!-- Top Mobile Header -->
+    <header class="h-14 bg-slate-900/95 backdrop-blur-md border-b border-slate-800/80 flex items-center justify-between px-3 z-30 shrink-0">
+        <!-- Logo & Mobile Title -->
+        <div class="flex items-center space-x-2">
+            <div class="bg-gradient-to-tr from-amber-500 to-blue-500 p-1.5 rounded-lg text-slate-950 font-black text-sm flex items-center justify-center w-8 h-8 shadow-md">
+                G3
+            </div>
+            <div>
+                <h1 class="font-bold text-sm tracking-wide text-slate-100 flex items-center gap-1">
+                    G3地图移动端
+                    <span id="dateBadge" class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">R4D2</span>
+                </h1>
+            </div>
+        </div>
+
+        <!-- Action Tools: Search, Filter, Data Upload -->
+        <div class="flex items-center gap-1.5">
+            <!-- Search Trigger Button -->
+            <button id="toggleSearchBtn" class="touch-btn rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 active:scale-95 transition-all">
+                <i class="fa-solid fa-magnifying-glass text-base"></i>
+            </button>
+
+            <!-- Alliance Filter Dropdown Trigger -->
+            <button id="toggleFilterBtn" class="touch-btn rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 active:scale-95 transition-all">
+                <i class="fa-solid fa-filter text-base"></i>
+            </button>
+
+            <!-- Import Data File Trigger -->
+            <label class="touch-btn rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30 active:scale-95 transition-all cursor-pointer">
+                <i class="fa-solid fa-file-arrow-up text-base"></i>
+                <input type="file" id="fileInput" accept=".json,.xlsx,.xls" class="hidden">
+            </label>
+        </div>
+    </header>
+
+    <!-- Expandable Search Overlay Panel for Mobile -->
+    <div id="searchOverlay" class="hidden absolute top-14 left-0 right-0 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 p-3 z-40 shadow-2xl">
+        <div class="relative flex items-center">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 text-slate-400 text-sm"></i>
+            <input type="text" id="searchInput" placeholder="按编号搜索 (如 4-11, 8-1)..." 
+                   class="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9 pr-10 py-2.5 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:border-amber-500">
+            <button id="clearSearchInput" class="absolute right-3 text-slate-400 hover:text-white p-1">
+                <i class="fa-solid fa-xmark text-sm"></i>
+            </button>
+        </div>
+        <div id="searchResults" class="hidden mt-2 max-h-48 overflow-y-auto rounded-xl bg-slate-800 border border-slate-700 divide-y divide-slate-700/50"></div>
+    </div>
+
+    <!-- Alliance Quick Selection Modal/Drawer -->
+    <div id="filterOverlay" class="hidden absolute top-14 left-0 right-0 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 p-3 z-40 shadow-2xl">
+        <div class="flex justify-between items-center mb-2">
+            <span class="text-xs font-bold text-slate-400">选择要查看的帮会势力</span>
+            <button id="closeFilterBtn" class="text-xs text-slate-400 hover:text-white px-2 py-1">关闭</button>
+        </div>
+        <div id="allianceChipList" class="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+            <!-- Dynamic Alliance Chips -->
+        </div>
+    </div>
+
+    <!-- Main Network Map Canvas Area -->
+    <div class="flex-1 relative overflow-hidden">
+        <div id="mynetwork"></div>
+
+        <!-- Touch Controls Floating Panel (Left Bottom) -->
+        <div class="absolute bottom-20 left-3 z-20 flex flex-col gap-2">
+            <button id="zoomInBtn" class="touch-btn bg-slate-900/90 border border-slate-800 text-slate-200 rounded-2xl shadow-lg active:scale-90 transition-transform">
+                <i class="fa-solid fa-plus text-base"></i>
+            </button>
+            <button id="zoomOutBtn" class="touch-btn bg-slate-900/90 border border-slate-800 text-slate-200 rounded-2xl shadow-lg active:scale-90 transition-transform">
+                <i class="fa-solid fa-minus text-base"></i>
+            </button>
+            <button id="resetViewBtn" class="touch-btn bg-slate-900/90 border border-slate-800 text-amber-400 rounded-2xl shadow-lg active:scale-90 transition-transform">
+                <i class="fa-solid fa-compress-arrows-alt text-base"></i>
+            </button>
+        </div>
+
+        <!-- Quick Top Badges for Outstanding Alliances -->
+        <div class="absolute top-3 left-3 right-3 z-10 flex items-center justify-between pointer-events-none">
+            <div class="flex items-center gap-2 bg-slate-900/85 backdrop-blur-md border border-slate-800/80 px-3 py-1.5 rounded-full shadow-lg pointer-events-auto">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50"></span>
+                    <span class="text-[11px] text-slate-300">风华绝代: <strong id="fh-count" class="text-amber-400 font-bold">0</strong></span>
+                </div>
+                <div class="w-px h-3 bg-slate-700"></div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-sm shadow-blue-500/50"></span>
+                    <span class="text-[11px] text-slate-300">休闲娱乐: <strong id="xx-count" class="text-blue-400 font-bold">0</strong></span>
+                </div>
+            </div>
+            
+            <button id="toggleLegendBtn" class="pointer-events-auto touch-btn !w-9 !h-9 bg-slate-900/85 backdrop-blur-md border border-slate-800 rounded-full text-slate-300 text-xs">
+                <i class="fa-solid fa-palette"></i>
+            </button>
+        </div>
+
+        <!-- Compact Floating Legend Modal -->
+        <div id="legendModal" class="hidden absolute top-14 right-3 z-30 w-48 bg-slate-900/95 border border-slate-800 rounded-2xl p-3 shadow-2xl backdrop-blur-md">
+            <div class="flex justify-between items-center mb-2 pb-1 border-b border-slate-800">
+                <span class="text-xs font-bold text-slate-200">势力图例说明</span>
+                <button id="closeLegendBtn" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="legendContent" class="space-y-1 max-h-48 overflow-y-auto text-[11px]">
+                <!-- Legend dynamically inserted -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Sliding Bottom Sheet for Mobile Details -->
+    <div id="bottomSheet" class="bottom-sheet closed absolute bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 rounded-t-3xl z-40 flex flex-col max-h-[75vh] shadow-[0_-10px_30px_rgba(0,0,0,0.7)]">
+        
+        <!-- Sheet Drag Handle -->
+        <div id="sheetHandle" class="w-full pt-3 pb-2 flex flex-col items-center justify-center cursor-pointer">
+            <div class="w-12 h-1.5 bg-slate-700 rounded-full"></div>
+        </div>
+
+        <!-- Sheet Header Bar -->
+        <div class="px-4 pb-3 flex items-center justify-between border-b border-slate-800/80">
+            <div class="flex items-center gap-2">
+                <span id="sheetLevelBadge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                    等级 - 城池
+                </span>
+                <h3 id="sheetCityTitle" class="text-xl font-black text-white">--</h3>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="sheetOwnerBadge" class="text-xs font-bold px-3 py-1 rounded-full text-slate-900">--</span>
+                <button id="closeSheetBtn" class="touch-btn !w-8 !h-8 text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-chevron-down"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Sheet Scrollable Content Body -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-3">
+            <!-- Stats Row -->
+            <div class="grid grid-cols-2 gap-2 text-xs">
+                <div class="p-2.5 bg-slate-800/50 border border-slate-800 rounded-xl">
+                    <span class="text-slate-400 block mb-0.5"><i class="fa-solid fa-diagram-project text-amber-400 mr-1"></i>连接通路</span>
+                    <span id="sheetConnectedCount" class="text-sm font-bold text-slate-200">0 个</span>
+                </div>
+                <div class="p-2.5 bg-slate-800/50 border border-slate-800 rounded-xl">
+                    <span class="text-slate-400 block mb-0.5"><i class="fa-solid fa-layer-group text-purple-400 mr-1"></i>战略圈层</span>
+                    <span id="sheetTier" class="text-sm font-bold text-slate-200">第 - 圈</span>
+                </div>
+            </div>
+
+            <!-- Connected Cities Fast Navigation Chips -->
+            <div class="bg-slate-800/30 border border-slate-800/60 rounded-xl p-3">
+                <h4 class="text-xs font-bold text-slate-400 mb-2 flex justify-between items-center">
+                    <span>相连城池 (点击进行地图视角聚焦)</span>
+                </h4>
+                <div id="sheetNeighborChips" class="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                    <!-- Chips inserted dynamically -->
+                </div>
+            </div>
+
+            <!-- Dynamic Future Extensible Card -->
+            <div class="bg-slate-800/20 border border-slate-800/60 rounded-xl p-3 text-xs space-y-1.5">
+                <div class="text-slate-400 font-bold flex justify-between">
+                    <span><i class="fa-solid fa-shield-cat text-blue-400 mr-1"></i>战况情报</span>
+                    <span class="text-[10px] text-slate-500">拓扑状态正常</span>
+                </div>
+                <div class="text-[11px] text-slate-400">
+                    当前城池参与 G3 地图拓扑联通，受上级要塞或邻近开放城池约束。
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application JavaScript Logic -->
+    <script>
+        // Full verified 85 cities dataset for R4D2
+        let currentDataset = [
+            {"id": "8-1", "level": 8, "owner": "未开放"},
+            {"id": "7-1", "level": 7, "owner": "未开放"},
+            {"id": "7-2", "level": 7, "owner": "未开放"},
+            {"id": "7-3", "level": 7, "owner": "未开放"},
+            {"id": "6-1", "level": 6, "owner": "未开放"},
+            {"id": "6-2", "level": 6, "owner": "未开放"},
+            {"id": "6-3", "level": 6, "owner": "未开放"},
+            {"id": "6-4", "level": 6, "owner": "未开放"},
+            {"id": "5-1", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-2", "level": 5, "owner": "风华绝代"},
+            {"id": "5-3", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-4", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-5", "level": 5, "owner": "无"},
+            {"id": "5-6", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-7", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-8", "level": 5, "owner": "无"},
+            {"id": "5-9", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-10", "level": 5, "owner": "风华绝代"},
+            {"id": "5-11", "level": 5, "owner": "诸神的黄昏"},
+            {"id": "4-1", "level": 4, "owner": "花满楼"},
+            {"id": "4-2", "level": 4, "owner": "风华绝代"},
+            {"id": "4-3", "level": 4, "owner": "花满楼"},
+            {"id": "4-4", "level": 4, "owner": "风华绝代"},
+            {"id": "4-5", "level": 4, "owner": "休闲娱乐"},
+            {"id": "4-6", "level": 4, "owner": "风华绝代"},
+            {"id": "4-7", "level": 4, "owner": "风华绝代"},
+            {"id": "4-8", "level": 4, "owner": "休闲娱乐"},
+            {"id": "4-9", "level": 4, "owner": "花满楼"},
+            {"id": "4-10", "level": 4, "owner": "风华绝代"},
+            {"id": "4-11", "level": 4, "owner": "风华绝代"},
+            {"id": "4-12", "level": 4, "owner": "花满楼"},
+            {"id": "4-13", "level": 4, "owner": "风华绝代"},
+            {"id": "4-14", "level": 4, "owner": "休闲娱乐"},
+            {"id": "3-1", "level": 3, "owner": "花满楼"},
+            {"id": "3-2", "level": 3, "owner": "诸神的黄昏"},
+            {"id": "3-3", "level": 3, "owner": "花满楼"},
+            {"id": "3-4", "level": 3, "owner": "就一个"},
+            {"id": "3-5", "level": 3, "owner": "休闲娱乐"},
+            {"id": "3-6", "level": 3, "owner": "花满楼"},
+            {"id": "3-7", "level": 3, "owner": "诸神的黄昏"},
+            {"id": "3-8", "level": 3, "owner": "休闲娱乐"},
+            {"id": "3-9", "level": 3, "owner": "休闲娱乐"},
+            {"id": "3-10", "level": 3, "owner": "风华绝代"},
+            {"id": "3-11", "level": 3, "owner": "花满楼"},
+            {"id": "3-12", "level": 3, "owner": "无"},
+            {"id": "3-13", "level": 3, "owner": "花满楼"},
+            {"id": "3-14", "level": 3, "owner": "花满楼"},
+            {"id": "2-1", "level": 2, "owner": "诸神的黄昏"},
+            {"id": "2-2", "level": 2, "owner": "猎鹰军团"},
+            {"id": "2-3", "level": 2, "owner": "夏天"},
+            {"id": "2-4", "level": 2, "owner": "憾山阁"},
+            {"id": "2-5", "level": 2, "owner": "夏天"},
+            {"id": "2-6", "level": 2, "owner": "无"},
+            {"id": "2-7", "level": 2, "owner": "无"},
+            {"id": "2-8", "level": 2, "owner": "就一个"},
+            {"id": "2-9", "level": 2, "owner": "无"},
+            {"id": "2-10", "level": 2, "owner": "憾山阁"},
+            {"id": "2-11", "level": 2, "owner": "憾山阁"},
+            {"id": "2-12", "level": 2, "owner": "无"},
+            {"id": "2-13", "level": 2, "owner": "叶无眠"},
+            {"id": "2-14", "level": 2, "owner": "诸神的黄昏"},
+            {"id": "2-15", "level": 2, "owner": "西南大观楼"},
+            {"id": "2-16", "level": 2, "owner": "无"},
+            {"id": "2-17", "level": 2, "owner": "法天象地"},
+            {"id": "2-18", "level": 2, "owner": "西南大观楼"},
+            {"id": "1-1", "level": 1, "owner": "长安城"},
+            {"id": "1-2", "level": 1, "owner": "长安城"},
+            {"id": "1-3", "level": 1, "owner": "无"},
+            {"id": "1-4", "level": 1, "owner": "西南大观楼"},
+            {"id": "1-5", "level": 1, "owner": "西南大观楼"},
+            {"id": "1-6", "level": 1, "owner": "就一个"},
+            {"id": "1-7", "level": 1, "owner": "就一个"},
+            {"id": "1-8", "level": 1, "owner": "长安城"},
+            {"id": "1-9", "level": 1, "owner": "憾山阁"},
+            {"id": "1-10", "level": 1, "owner": "诸神的黄昏"},
+            {"id": "1-11", "level": 1, "owner": "法天象地"},
+            {"id": "1-12", "level": 1, "owner": "法天象地"},
+            {"id": "1-13", "level": 1, "owner": "就一个"},
+            {"id": "1-14", "level": 1, "owner": "诸神的黄昏"},
+            {"id": "1-15", "level": 1, "owner": "就一个"},
+            {"id": "1-16", "level": 1, "owner": "夏天"},
+            {"id": "1-17", "level": 1, "owner": "法天象地"},
+            {"id": "1-18", "level": 1, "owner": "我要验牌"},
+            {"id": "1-19", "level": 1, "owner": "法天象地"},
+            {"id": "1-20", "level": 1, "owner": "憾山阁"}
+        ];
+
+        // G3 Topological map edges
+        const rawEdges = [
+            {"source": "1-1", "target": "1-2"}, {"source": "1-1", "target": "2-12"}, {"source": "1-1", "target": "2-15"}, {"source": "1-1", "target": "2-7"}, {"source": "1-1", "target": "4-1"}, {"source": "1-10", "target": "1-8"}, {"source": "1-10", "target": "1-9"}, {"source": "1-10", "target": "2-14"}, {"source": "1-10", "target": "3-2"}, {"source": "1-10", "target": "5-2"}, {"source": "1-11", "target": "1-12"}, {"source": "1-11", "target": "2-13"}, {"source": "1-11", "target": "3-7"}, {"source": "1-11", "target": "4-10"}, {"source": "1-12", "target": "2-13"}, {"source": "1-12", "target": "3-7"}, {"source": "1-12", "target": "4-9"}, {"source": "1-13", "target": "1-14"}, {"source": "1-13", "target": "1-4"}, {"source": "1-13", "target": "2-4"}, {"source": "1-13", "target": "3-5"}, {"source": "1-13", "target": "5-1"}, {"source": "1-14", "target": "1-8"}, {"source": "1-14", "target": "2-14"}, {"source": "1-14", "target": "3-2"}, {"source": "1-14", "target": "5-2"}, {"source": "1-15", "target": "1-16"}, {"source": "1-15", "target": "2-5"}, {"source": "1-15", "target": "2-9"}, {"source": "1-15", "target": "3-8"}, {"source": "1-15", "target": "4-3"}, {"source": "1-16", "target": "2-5"}, {"source": "1-16", "target": "2-9"}, {"source": "1-16", "target": "3-8"}, {"source": "1-16", "target": "4-4"}, {"source": "1-17", "target": "1-18"}, {"source": "1-17", "target": "2-10"}, {"source": "1-17", "target": "2-6"}, {"source": "1-17", "target": "3-6"}, {"source": "1-17", "target": "4-6"}, {"source": "1-18", "target": "2-10"}, {"source": "1-18", "target": "2-6"}, {"source": "1-18", "target": "3-6"}, {"source": "1-18", "target": "4-5"}, {"source": "1-19", "target": "1-20"}, {"source": "1-19", "target": "2-11"}, {"source": "1-19", "target": "2-16"}, {"source": "1-19", "target": "3-9"}, {"source": "1-19", "target": "4-7"}, {"source": "1-2", "target": "2-12"}, {"source": "1-2", "target": "2-15"}, {"source": "1-2", "target": "2-7"}, {"source": "1-2", "target": "4-2"}, {"source": "1-20", "target": "2-11"}, {"source": "1-20", "target": "2-16"}, {"source": "1-20", "target": "3-9"}, {"source": "1-20", "target": "4-8"}, {"source": "1-21", "target": "1-22"}, {"source": "1-21", "target": "2-1"}, {"source": "1-21", "target": "2-8"}, {"source": "1-21", "target": "3-10"}, {"source": "1-21", "target": "4-12"}, {"source": "1-22", "target": "2-1"}, {"source": "1-22", "target": "2-8"}, {"source": "1-22", "target": "3-10"}, {"source": "1-22", "target": "4-11"}, {"source": "1-23", "target": "1-24"}, {"source": "1-23", "target": "2-2"}, {"source": "1-23", "target": "2-3"}, {"source": "1-23", "target": "3-11"}, {"source": "1-23", "target": "4-14"}, {"source": "1-24", "target": "2-2"}, {"source": "1-24", "target": "2-3"}, {"source": "1-24", "target": "3-11"}, {"source": "1-24", "target": "4-13"}, {"source": "1-3", "target": "1-4"}, {"source": "1-3", "target": "2-4"}, {"source": "1-3", "target": "3-5"}, {"source": "1-3", "target": "5-1"}, {"source": "1-4", "target": "2-4"}, {"source": "1-4", "target": "3-5"}, {"source": "1-4", "target": "5-1"}, {"source": "1-5", "target": "1-6"}, {"source": "1-5", "target": "2-17"}, {"source": "1-5", "target": "2-18"}, {"source": "1-5", "target": "3-1"}, {"source": "1-5", "target": "5-3"}, {"source": "1-6", "target": "2-17"}, {"source": "1-6", "target": "2-18"}, {"source": "1-6", "target": "3-1"}, {"source": "1-6", "target": "5-3"}, {"source": "1-7", "target": "1-8"}, {"source": "1-7", "target": "2-17"}, {"source": "1-7", "target": "2-18"}, {"source": "1-7", "target": "3-1"}, {"source": "1-7", "target": "5-3"}, {"source": "1-8", "target": "1-9"}, {"source": "1-8", "target": "2-14"}, {"source": "1-8", "target": "3-2"}, {"source": "1-8", "target": "5-2"}, {"source": "1-9", "target": "2-14"}, {"source": "1-9", "target": "3-2"}, {"source": "1-9", "target": "5-2"}, {"source": "2-1", "target": "2-8"}, {"source": "2-1", "target": "3-10"}, {"source": "2-10", "target": "2-6"}, {"source": "2-10", "target": "3-6"}, {"source": "2-10", "target": "4-6"}, {"source": "2-11", "target": "2-16"}, {"source": "2-11", "target": "3-9"}, {"source": "2-11", "target": "4-8"}, {"source": "2-12", "target": "2-15"}, {"source": "2-12", "target": "2-7"}, {"source": "2-12", "target": "4-2"}, {"source": "2-13", "target": "3-7"}, {"source": "2-13", "target": "4-9"}, {"source": "2-14", "target": "3-2"}, {"source": "2-14", "target": "5-2"}, {"source": "2-15", "target": "2-7"}, {"source": "2-15", "target": "4-1"}, {"source": "2-16", "target": "3-9"}, {"source": "2-16", "target": "4-7"}, {"source": "2-17", "target": "2-18"}, {"source": "2-17", "target": "3-1"}, {"source": "2-17", "target": "5-3"}, {"source": "2-18", "target": "3-1"}, {"source": "2-18", "target": "5-3"}, {"source": "2-2", "target": "2-3"}, {"source": "2-2", "target": "3-11"}, {"source": "2-2", "target": "4-14"}, {"source": "2-3", "target": "3-11"}, {"source": "2-3", "target": "4-13"}, {"source": "2-4", "target": "3-5"}, {"source": "2-4", "target": "5-1"}, {"source": "2-5", "target": "2-9"}, {"source": "2-5", "target": "3-8"}, {"source": "2-5", "target": "4-3"}, {"source": "2-6", "target": "3-6"}, {"source": "2-6", "target": "4-5"}, {"source": "2-7", "target": "4-1"}, {"source": "2-8", "target": "3-10"}, {"source": "2-8", "target": "4-11"}, {"source": "2-9", "target": "3-8"}, {"source": "2-9", "target": "4-4"}, {"source": "3-1", "target": "4-10"}, {"source": "3-1", "target": "5-3"}, {"source": "3-10", "target": "4-12"}, {"source": "3-10", "target": "5-6"}, {"source": "3-11", "target": "4-13"}, {"source": "3-11", "target": "5-7"}, {"source": "3-12", "target": "4-11"}, {"source": "3-12", "target": "4-12"}, {"source": "3-12", "target": "5-6"}, {"source": "3-13", "target": "4-13"}, {"source": "3-13", "target": "4-14"}, {"source": "3-13", "target": "5-7"}, {"source": "3-14", "target": "4-1"}, {"source": "3-14", "target": "4-2"}, {"source": "3-14", "target": "5-4"}, {"source": "3-15", "target": "4-3"}, {"source": "3-15", "target": "4-4"}, {"source": "3-15", "target": "5-5"}, {"source": "3-2", "target": "4-9"}, {"source": "3-2", "target": "5-2"}, {"source": "3-3", "target": "4-5"}, {"source": "3-3", "target": "4-6"}, {"source": "3-3", "target": "5-5"}, {"source": "3-4", "target": "4-7"}, {"source": "3-4", "target": "4-8"}, {"source": "3-4", "target": "5-4"}, {"source": "3-5", "target": "5-1"}, {"source": "3-6", "target": "4-5"}, {"source": "3-6", "target": "5-5"}, {"source": "3-7", "target": "4-10"}, {"source": "3-7", "target": "5-2"}, {"source": "3-8", "target": "4-3"}, {"source": "3-8", "target": "5-5"}, {"source": "3-9", "target": "4-7"}, {"source": "3-9", "target": "5-4"}, {"source": "4-1", "target": "4-2"}, {"source": "4-1", "target": "5-4"}, {"source": "4-10", "target": "5-3"}, {"source": "4-11", "target": "4-12"}, {"source": "4-11", "target": "5-8"}, {"source": "4-11", "target": "6-4"}, {"source": "4-12", "target": "5-10"}, {"source": "4-12", "target": "6-1"}, {"source": "4-13", "target": "4-14"}, {"source": "4-13", "target": "5-10"}, {"source": "4-13", "target": "6-1"}, {"source": "4-14", "target": "5-8"}, {"source": "4-14", "target": "6-4"}, {"source": "4-2", "target": "5-1"}, {"source": "4-3", "target": "4-4"}, {"source": "4-3", "target": "5-5"}, {"source": "4-4", "target": "5-9"}, {"source": "4-4", "target": "6-2"}, {"source": "4-5", "target": "4-6"}, {"source": "4-5", "target": "5-5"}, {"source": "4-6", "target": "5-10"}, {"source": "4-6", "target": "6-3"}, {"source": "4-7", "target": "4-8"}, {"source": "4-7", "target": "5-9"}, {"source": "4-7", "target": "6-2"}, {"source": "4-8", "target": "5-10"}, {"source": "4-8", "target": "6-3"}, {"source": "4-9", "target": "4-10"}, {"source": "4-9", "target": "5-2"}, {"source": "5-1", "target": "5-9"}, {"source": "5-10", "target": "6-1"}, {"source": "5-10", "target": "6-3"}, {"source": "5-11", "target": "5-8"}, {"source": "5-11", "target": "5-9"}, {"source": "5-11", "target": "6-2"}, {"source": "5-11", "target": "6-4"}, {"source": "5-12", "target": "5-6"}, {"source": "5-12", "target": "5-7"}, {"source": "5-2", "target": "5-9"}, {"source": "5-3", "target": "5-8"}, {"source": "5-6", "target": "5-7"}, {"source": "5-8", "target": "6-1"}, {"source": "5-8", "target": "6-4"}, {"source": "5-8", "target": "7-3"}, {"source": "5-9", "target": "6-2"}, {"source": "5-9", "target": "6-3"}, {"source": "5-9", "target": "7-1"}, {"source": "5-9", "target": "7-2"}, {"source": "6-1", "target": "6-3"}, {"source": "6-1", "target": "7-2"}, {"source": "6-1", "target": "7-3"}, {"source": "6-2", "target": "6-4"}, {"source": "6-2", "target": "7-1"}, {"source": "6-3", "target": "7-2"}, {"source": "6-4", "target": "7-1"}, {"source": "6-4", "target": "7-3"}, {"source": "7-1", "target": "7-2"}, {"source": "7-1", "target": "7-3"}, {"source": "7-1", "target": "8-1"}, {"source": "7-2", "target": "7-3"}, {"source": "7-2", "target": "8-1"}, {"source": "7-3", "target": "8-1"}
+        ];
+
+        // Color definitions optimized for contrast & mobile screen clarity
+        const ownerColors = {
+            "风华绝代": { bg: "#f59e0b", border: "#fbbf24", text: "#0f172a", highlightBg: "#fcd34d" }, // Gold
+            "休闲娱乐": { bg: "#3b82f6", border: "#60a5fa", text: "#ffffff", highlightBg: "#93c5fd" }, // Blue
+            "未开放":   { bg: "#4b5563", border: "#6b7280", text: "#9ca3af", highlightBg: "#6b7280" }, // Gray
+            "无":       { bg: "#4b5563", border: "#6b7280", text: "#9ca3af", highlightBg: "#6b7280" }, // Gray
+
+            "花满楼":     { bg: "#ec4899", border: "#f472b6", text: "#ffffff", highlightBg: "#f472b6" },
+            "诸神的黄昏": { bg: "#8b5cf6", border: "#a78bfa", text: "#ffffff", highlightBg: "#a78bfa" },
+            "就一个":     { bg: "#10b981", border: "#34d399", text: "#ffffff", highlightBg: "#34d399" },
+            "憾山阁":     { bg: "#84cc16", border: "#a3e635", text: "#ffffff", highlightBg: "#a3e635" },
+            "法天象地":   { bg: "#06b6d4", border: "#22d3ee", text: "#ffffff", highlightBg: "#22d3ee" },
+            "西南大观楼": { bg: "#14b8a6", border: "#2dd4bf", text: "#ffffff", highlightBg: "#2dd4bf" },
+            "夏天":       { bg: "#f43f5e", border: "#fb7185", text: "#ffffff", highlightBg: "#fb7185" },
+            "猎鹰军团":   { bg: "#6366f1", border: "#818cf8", text: "#ffffff", highlightBg: "#818cf8" },
+            "长安城":     { bg: "#d97706", border: "#f59e0b", text: "#ffffff", highlightBg: "#fbbf24" },
+            "叶无眠":     { bg: "#0284c7", border: "#38bdf8", text: "#ffffff", highlightBg: "#38bdf8" },
+            "我要验牌":   { bg: "#a855f7", border: "#c084fc", text: "#ffffff", highlightBg: "#c084fc" }
+        };
+
+        function getOwnerColor(owner) {
+            return ownerColors[owner] || { bg: "#64748b", border: "#94a3b8", text: "#ffffff", highlightBg: "#cbd5e1" };
+        }
+
+        // Global State Variables
+        let network = null;
+        let nodesDataSet = null;
+        let edgesDataSet = null;
+        let selectedNodeId = null;
+        let adjacencyMap = {};
+
+        // Calculate Concentric Ring Coordinates
+        function calculatePositions(dataset) {
+            const positions = {};
+            const levelCounts = {};
+            
+            dataset.forEach(node => {
+                levelCounts[node.level] = (levelCounts[node.level] || 0) + 1;
+            });
+
+            const levelIndices = {};
+            const baseScale = Math.min(window.innerWidth, window.innerHeight) > 600 ? 150 : 120;
+
+            dataset.forEach(node => {
+                const lvl = node.level;
+                if (!levelIndices[lvl]) levelIndices[lvl] = 0;
+                
+                const index = levelIndices[lvl]++;
+                const total = levelCounts[lvl];
+                const radius = (8 - lvl) * baseScale;
+                const angleOffset = (lvl % 2 === 0) ? 0 : Math.PI / total;
+                const angle = (index / total) * 2 * Math.PI + angleOffset;
+
+                positions[node.id] = {
+                    x: radius * Math.cos(angle),
+                    y: radius * Math.sin(angle)
+                };
+            });
+
+            return positions;
+        }
+
+        // Initialize Application
+        window.onload = function() {
+            initAdjacencyMap();
+            initNetwork();
+            initHeaderStats();
+            initAllianceChips();
+            initLegend();
+            setupEvents();
+            setupBottomSheetTouch();
+        };
+
+        function initAdjacencyMap() {
+            adjacencyMap = {};
+            currentDataset.forEach(n => adjacencyMap[n.id] = new Set());
+            rawEdges.forEach(e => {
+                if (adjacencyMap[e.source]) adjacencyMap[e.source].add(e.target);
+                if (adjacencyMap[e.target]) adjacencyMap[e.target].add(e.source);
+            });
+        }
+
+        function initNetwork() {
+            const positions = calculatePositions(currentDataset);
+
+            const nodesArray = currentDataset.map(n => {
+                const colors = getOwnerColor(n.owner);
+                const size = 10 + n.level * 3.5;
+                const fontSize = 10 + n.level * 1.5;
+                const isFeatured = n.owner === '风华绝代' || n.owner === '休闲娱乐';
+
+                return {
+                    id: n.id,
+                    label: n.id,
+                    level: n.level,
+                    owner: n.owner,
+                    shape: 'dot',
+                    size: size,
+                    x: positions[n.id] ? positions[n.id].x : 0,
+                    y: positions[n.id] ? positions[n.id].y : 0,
+                    font: {
+                        size: fontSize,
+                        color: (n.owner === '未开放' || n.owner === '无') ? '#9ca3af' : '#ffffff',
+                        face: 'Inter, system-ui, sans-serif',
+                        strokeWidth: 3,
+                        strokeColor: '#070a12'
+                    },
+                    color: {
+                        background: colors.bg,
+                        border: colors.border,
+                        highlight: { background: colors.highlightBg, border: '#ffffff' }
+                    },
+                    borderWidth: isFeatured ? 3 : 1.5,
+                    shadow: isFeatured ? { enabled: true, color: colors.bg, size: 10 } : false
+                };
+            });
+
+            const edgesArray = rawEdges.map((e, idx) => ({
+                id: `e_${idx}`,
+                from: e.source,
+                to: e.target,
+                color: { color: '#1e293b', opacity: 0.6 },
+                width: 1.2,
+                smooth: { type: 'continuous' }
+            }));
+
+            nodesDataSet = new vis.DataSet(nodesArray);
+            edgesDataSet = new vis.DataSet(edgesArray);
+
+            const container = document.getElementById('mynetwork');
+            const data = { nodes: nodesDataSet, edges: edgesDataSet };
+            
+            const options = {
+                nodes: { borderWidthSelected: 4 },
+                edges: { selectionWidth: 2 },
+                interaction: {
+                    hover: false,
+                    zoomView: true,
+                    dragView: true,
+                    multiselect: false
+                },
+                physics: {
+                    enabled: true,
+                    solver: 'forceAtlas2Based',
+                    forceAtlas2Based: {
+                        gravitationalConstant: -35,
+                        centralGravity: 0.01,
+                        springLength: 80,
+                        springConstant: 0.08
+                    },
+                    stabilization: { iterations: 100 }
+                }
+            };
+
+            network = new vis.Network(container, data, options);
+
+            // Selection Event
+            network.on("selectNode", function(params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    selectCityNode(nodeId);
+                }
+            });
+
+            network.on("deselectNode", function() {
+                resetGraphHighlight();
+                hideBottomSheet();
+            });
+        }
+
+        // Highlight selected node + connected edges/neighbors, fade non-connected
+        function selectCityNode(nodeId) {
+            selectedNodeId = nodeId;
+            const neighbors = adjacencyMap[nodeId] || new Set();
+
+            const nodeUpdates = [];
+            nodesDataSet.forEach(node => {
+                const isTarget = node.id === nodeId;
+                const isNeighbor = neighbors.has(node.id);
+                nodeUpdates.push({
+                    id: node.id,
+                    opacity: (isTarget || isNeighbor) ? 1.0 : 0.12,
+                    font: { opacity: (isTarget || isNeighbor) ? 1.0 : 0.12 }
+                });
+            });
+            nodesDataSet.update(nodeUpdates);
+
+            const edgeUpdates = [];
+            edgesDataSet.forEach(edge => {
+                const isConnected = (edge.from === nodeId && neighbors.has(edge.to)) || 
+                                    (edge.to === nodeId && neighbors.has(edge.from));
+                edgeUpdates.push({
+                    id: edge.id,
+                    color: { color: isConnected ? '#f59e0b' : '#0f172a', opacity: isConnected ? 1.0 : 0.05 },
+                    width: isConnected ? 2.5 : 1
+                });
+            });
+            edgesDataSet.update(edgeUpdates);
+
+            openBottomSheet(nodeId);
+        }
+
+        function resetGraphHighlight() {
+            selectedNodeId = null;
+            const nodeUpdates = [];
+            nodesDataSet.forEach(node => {
+                nodeUpdates.push({ id: node.id, opacity: 1.0, font: { opacity: 1.0 } });
+            });
+            nodesDataSet.update(nodeUpdates);
+
+            const edgeUpdates = [];
+            edgesDataSet.forEach(edge => {
+                edgeUpdates.push({ id: edge.id, color: { color: '#1e293b', opacity: 0.6 }, width: 1.2 });
+            });
+            edgesDataSet.update(edgeUpdates);
+        }
+
+        // Bottom Sheet Controller
+        function openBottomSheet(nodeId) {
+            const city = currentDataset.find(n => n.id === nodeId);
+            if (!city) return;
+
+            document.getElementById('sheetCityTitle').textContent = `城池 ${city.id}`;
+            document.getElementById('sheetLevelBadge').textContent = `等级 ${city.level} 城池`;
+            
+            const colors = getOwnerColor(city.owner);
+            const ownerBadge = document.getElementById('sheetOwnerBadge');
+            ownerBadge.textContent = city.owner;
+            ownerBadge.style.backgroundColor = colors.bg;
+            ownerBadge.style.color = colors.text;
+
+            const neighbors = Array.from(adjacencyMap[nodeId] || []);
+            document.getElementById('sheetConnectedCount').textContent = `${neighbors.length} 个`;
+            document.getElementById('sheetTier').textContent = `第 ${9 - city.level} 圈`;
+
+            const chipsContainer = document.getElementById('sheetNeighborChips');
+            chipsContainer.innerHTML = '';
+
+            neighbors.sort((a,b) => a.localeCompare(b, undefined, {numeric: true})).forEach(nId => {
+                const nCity = currentDataset.find(n => n.id === nId);
+                const nColor = getOwnerColor(nCity ? nCity.owner : '无');
+                
+                const chip = document.createElement('button');
+                chip.className = 'touch-btn !min-h-[36px] px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs flex items-center gap-1.5 transition-all';
+                chip.innerHTML = `
+                    <span class="w-2 h-2 rounded-full shrink-0" style="background-color: ${nColor.bg}"></span>
+                    <span class="font-bold text-slate-100">${nId}</span>
+                    <span class="text-[10px] text-slate-400">(${nCity ? nCity.owner : ''})</span>
+                `;
+                chip.onclick = () => {
+                    network.selectNodes([nId]);
+                    selectCityNode(nId);
+                    network.focus(nId, { scale: 1.2, animation: true });
+                };
+                chipsContainer.appendChild(chip);
+            });
+
+            const sheet = document.getElementById('bottomSheet');
+            sheet.classList.remove('closed', 'collapsed');
+        }
+
+        function hideBottomSheet() {
+            const sheet = document.getElementById('bottomSheet');
+            sheet.classList.add('closed');
+        }
+
+        // Stats & Alliances Lists
+        function initHeaderStats() {
+            let fh = 0, xx = 0;
+            currentDataset.forEach(n => {
+                if (n.owner === '风华绝代') fh++;
+                if (n.owner === '休闲娱乐') xx++;
+            });
+            document.getElementById('fh-count').textContent = fh;
+            document.getElementById('xx-count').textContent = xx;
+        }
+
+        function initAllianceChips() {
+            const counts = {};
+            currentDataset.forEach(n => counts[n.owner] = (counts[n.owner] || 0) + 1);
+
+            const container = document.getElementById('allianceChipList');
+            container.innerHTML = '';
+
+            // Add "Show All" Chip
+            const allBtn = document.createElement('button');
+            allBtn.className = 'touch-btn !min-h-[36px] px-3 py-1 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs';
+            allBtn.textContent = '全部帮会';
+            allBtn.onclick = () => {
+                resetGraphHighlight();
+                document.getElementById('filterOverlay').classList.add('hidden');
+            };
+            container.appendChild(allBtn);
+
+            Object.keys(counts).forEach(owner => {
+                const colors = getOwnerColor(owner);
+                const btn = document.createElement('button');
+                btn.className = 'touch-btn !min-h-[36px] px-3 py-1 rounded-xl bg-slate-800 border border-slate-700 text-xs flex items-center gap-1.5';
+                btn.innerHTML = `
+                    <span class="w-2.5 h-2.5 rounded-full" style="background-color:${colors.bg}"></span>
+                    <span class="text-slate-200">${owner}</span>
+                    <span class="text-[10px] bg-slate-700 text-slate-300 px-1.5 rounded-full">${counts[owner]}</span>
+                `;
+                btn.onclick = () => {
+                    filterGraphByOwner(owner);
+                    document.getElementById('filterOverlay').classList.add('hidden');
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        function filterGraphByOwner(owner) {
+            const nodeUpdates = [];
+            nodesDataSet.forEach(node => {
+                const match = (owner === '无') ? (node.owner === '无' || node.owner === '未开放') : (node.owner === owner);
+                nodeUpdates.push({ id: node.id, opacity: match ? 1.0 : 0.08, font: { opacity: match ? 1.0 : 0.08 } });
+            });
+            nodesDataSet.update(nodeUpdates);
+
+            const edgeUpdates = [];
+            edgesDataSet.forEach(edge => {
+                edgeUpdates.push({ id: edge.id, color: { opacity: 0.03 } });
+            });
+            edgesDataSet.update(edgeUpdates);
+        }
+
+        function initLegend() {
+            const counts = {};
+            currentDataset.forEach(n => counts[n.owner] = (counts[n.owner] || 0) + 1);
+
+            const container = document.getElementById('legendContent');
+            container.innerHTML = '';
+
+            Object.keys(counts).sort().forEach(owner => {
+                const colors = getOwnerColor(owner);
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between py-1 border-b border-slate-800/40';
+                row.innerHTML = `
+                    <div class="flex items-center gap-1.5 truncate">
+                        <span class="w-2.5 h-2.5 rounded-full" style="background-color:${colors.bg}"></span>
+                        <span class="text-slate-300 truncate">${owner}</span>
+                    </div>
+                    <span class="text-slate-400 font-mono text-[10px]">${counts[owner]}城</span>
+                `;
+                container.appendChild(row);
+            });
+        }
+
+        // Setup All UI Event Handlers
+        function setupEvents() {
+            // Zoom controls
+            document.getElementById('zoomInBtn').onclick = () => network.moveTo({ scale: network.getScale() * 1.3, animation: true });
+            document.getElementById('zoomOutBtn').onclick = () => network.moveTo({ scale: network.getScale() * 0.7, animation: true });
+            document.getElementById('resetViewBtn').onclick = () => {
+                network.fit({ animation: true });
+                resetGraphHighlight();
+                hideBottomSheet();
+            };
+
+            // Toggle Search & Filter Overlays
+            const searchOverlay = document.getElementById('searchOverlay');
+            const filterOverlay = document.getElementById('filterOverlay');
+            const legendModal = document.getElementById('legendModal');
+
+            document.getElementById('toggleSearchBtn').onclick = () => {
+                searchOverlay.classList.toggle('hidden');
+                filterOverlay.classList.add('hidden');
+                legendModal.classList.add('hidden');
+                if (!searchOverlay.classList.contains('hidden')) {
+                    document.getElementById('searchInput').focus();
+                }
+            };
+
+            document.getElementById('toggleFilterBtn').onclick = () => {
+                filterOverlay.classList.toggle('hidden');
+                searchOverlay.classList.add('hidden');
+                legendModal.classList.add('hidden');
+            };
+
+            document.getElementById('closeFilterBtn').onclick = () => filterOverlay.classList.add('hidden');
+
+            document.getElementById('toggleLegendBtn').onclick = () => {
+                legendModal.classList.toggle('hidden');
+                searchOverlay.classList.add('hidden');
+                filterOverlay.classList.add('hidden');
+            };
+            document.getElementById('closeLegendBtn').onclick = () => legendModal.classList.add('hidden');
+            document.getElementById('closeSheetBtn').onclick = () => hideBottomSheet();
+
+            // Search Logic (Real-time and Enter key)
+            const searchInput = document.getElementById('searchInput');
+            const searchResults = document.getElementById('searchResults');
+
+            function executeSearchTarget(query) {
+                if (!query) return;
+                const match = currentDataset.find(n => n.id.toLowerCase() === query.toLowerCase()) ||
+                              currentDataset.find(n => n.id.toLowerCase().includes(query.toLowerCase()));
+                if (match) {
+                    searchInput.value = match.id;
+                    searchResults.classList.add('hidden');
+                    searchOverlay.classList.add('hidden');
+                    
+                    network.selectNodes([match.id]);
+                    selectCityNode(match.id);
+                    network.focus(match.id, { scale: 1.3, animation: true });
+                }
+            }
+
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    executeSearchTarget(searchInput.value.trim());
+                }
+            });
+
+            searchInput.addEventListener('input', (e) => {
+                const val = e.target.value.trim().toLowerCase();
+                if (!val) {
+                    searchResults.classList.add('hidden');
+                    return;
+                }
+
+                const matches = currentDataset.filter(n => n.id.toLowerCase().includes(val) || n.owner.includes(val)).slice(0, 6);
+                if (matches.length > 0) {
+                    searchResults.innerHTML = matches.map(n => `
+                        <div class="p-3 hover:bg-slate-700/80 cursor-pointer flex justify-between items-center text-xs" data-id="${n.id}">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full" style="background-color:${getOwnerColor(n.owner).bg}"></span>
+                                <span class="font-bold text-slate-100">城池 ${n.id}</span>
+                            </div>
+                            <span class="text-slate-400 text-[11px]">${n.owner} (L${n.level})</span>
+                        </div>
+                    `).join('');
+                    searchResults.classList.remove('hidden');
+
+                    searchResults.querySelectorAll('div[data-id]').forEach(el => {
+                        el.onclick = () => {
+                            const id = el.getAttribute('data-id');
+                            executeSearchTarget(id);
+                        };
+                    });
+                } else {
+                    searchResults.innerHTML = `<div class="p-3 text-xs text-slate-400 text-center">无匹配城池</div>`;
+                    searchResults.classList.remove('hidden');
+                }
+            });
+
+            document.getElementById('clearSearchInput').onclick = () => {
+                searchInput.value = '';
+                searchResults.classList.add('hidden');
+            };
+
+            // Dynamic File Import Upload Handler (.json / .xlsx)
+            document.getElementById('fileInput').addEventListener('change', handleFileUpload);
+        }
+
+        // Handle File Import (.json / .xlsx) dynamically on Mobile
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            const fileName = file.name.toLowerCase();
+
+            if (fileName.endsWith('.json')) {
+                reader.onload = function(evt) {
+                    try {
+                        const parsed = JSON.parse(evt.target.result);
+                        const dataArray = Array.isArray(parsed) ? parsed : (parsed.cityOwnership || parsed.nodes);
+                        if (dataArray) updateDataset(dataArray, file.name);
+                    } catch (err) {
+                        alert('JSON文件解析失败，请检查文件格式');
+                    }
+                };
+                reader.readAsText(file);
+            } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+                reader.onload = function(evt) {
+                    try {
+                        const data = new Uint8Array(evt.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                        const json = XLSX.utils.sheet_to_json(firstSheet);
+                        
+                        // Standardize excel column names
+                        const formatted = json.map(row => ({
+                            id: String(row.城池编号 || row.id || row.ID || row.城池),
+                            level: parseInt(row.等级 || row.level || 1),
+                            owner: String(row.归属 || row.owner || row.帮会 || '无')
+                        })).filter(item => item.id);
+
+                        if (formatted.length > 0) {
+                            updateDataset(formatted, file.name);
+                        } else {
+                            alert('Excel未能识别到有效的城池编号与归属列');
+                        }
+                    } catch (err) {
+                        alert('Excel文件解析失败，请确保格式正确');
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        function updateDataset(newData, name) {
+            currentDataset = newData;
+            initAdjacencyMap();
+            initNetwork();
+            initHeaderStats();
+            initAllianceChips();
+            initLegend();
+            
+            document.getElementById('dateBadge').textContent = '已更新';
+            alert(`已成功导入战报数据 (${newData.length} 个城池)`);
+        }
+
+        // Swipe Gesture Handle for Bottom Sheet
+        function setupBottomSheetTouch() {
+            const sheet = document.getElementById('bottomSheet');
+            const handle = document.getElementById('sheetHandle');
+            let startY = 0;
+            let currentY = 0;
+
+            handle.addEventListener('touchstart', (e) => {
+                startY = e.touches[0].clientY;
+            }, { passive: true });
+
+            handle.addEventListener('touchmove', (e) => {
+                currentY = e.touches[0].clientY;
+                const diff = currentY - startY;
+                if (diff > 0) {
+                    sheet.style.transform = `translateY(${diff}px)`;
+                }
+            }, { passive: true });
+
+            handle.addEventListener('touchend', () => {
+                sheet.style.transform = '';
+                const diff = currentY - startY;
+                if (diff > 80) {
+                    hideBottomSheet();
+                }
+            });
+        }
+    </script>
+</body>
+</html>
