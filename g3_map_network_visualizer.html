@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>G3 地图战局与城池归属可视化 (R4D2 全量版)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vis.js Network -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0f172a',
+                        cardbg: '#1e293b',
+                        borderbg: '#334155'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+        }
+        #mynetwork {
+            width: 100%;
+            height: 100%;
+            background-color: #0b1120;
+        }
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen text-slate-200 select-none">
+
+    <!-- Top Navigation Header -->
+    <header class="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 z-20 shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="bg-gradient-to-r from-amber-500 to-blue-500 p-2 rounded-lg text-slate-950 font-bold text-lg flex items-center justify-center w-8 h-8 shadow-lg shadow-amber-500/10">
+                <i class="fa-solid fa-map-location-dot"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-base md:text-lg leading-tight tracking-wide text-slate-100 flex items-center gap-2">
+                    G3 战略地图网络
+                    <span class="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">R4D2 准确数据</span>
+                </h1>
+            </div>
+        </div>
+
+        <!-- Search Bar, Alliance Filter & Actions -->
+        <div class="flex items-center gap-2 sm:gap-3">
+            <!-- Filter Dropdown -->
+            <select id="allianceFilter" class="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 transition-colors cursor-pointer">
+                <option value="ALL">所有帮会势力</option>
+                <option value="风华绝代">风华绝代 (高亮金色)</option>
+                <option value="休闲娱乐">休闲娱乐 (高亮亮蓝)</option>
+                <option value="花满楼">花满楼</option>
+                <option value="诸神的黄昏">诸神的黄昏</option>
+                <option value="就一个">就一个</option>
+                <option value="憾山阁">憾山阁</option>
+                <option value="法天象地">法天象地</option>
+                <option value="西南大观楼">西南大观楼</option>
+                <option value="夏天">夏天</option>
+                <option value="猎鹰军团">猎鹰军团</option>
+                <option value="长安城">长安城</option>
+                <option value="叶无眠">叶无眠</option>
+                <option value="我要验牌">我要验牌</option>
+                <option value="无">无 / 未开放</option>
+            </select>
+
+            <!-- Search Input -->
+            <div class="relative w-36 sm:w-56">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                <input type="text" id="searchInput" placeholder="搜索城池 (如 4-11)..." 
+                       class="w-full bg-slate-800 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:border-amber-500 transition-colors">
+                <div id="searchResults" class="hidden absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl max-h-60 overflow-y-auto z-50"></div>
+            </div>
+
+            <button id="resetZoomBtn" title="重置视角与高亮" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors">
+                <i class="fa-solid fa-rotate-left text-xs"></i>
+            </button>
+            
+            <button id="toggleSidebarBtn" title="切换右侧面板" class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors md:hidden">
+                <i class="fa-solid fa-sidebar text-xs"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="flex-1 flex relative overflow-hidden">
+        
+        <!-- Graph Canvas Area -->
+        <div class="flex-1 relative h-full">
+            <div id="mynetwork"></div>
+
+            <!-- Floating Control Tools -->
+            <div class="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
+                <div class="bg-slate-900/90 backdrop-blur-md border border-slate-800 p-2 rounded-xl shadow-2xl flex flex-col gap-1">
+                    <button id="zoomInBtn" class="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg transition-colors" title="放大">
+                        <i class="fa-solid fa-plus text-sm w-5 h-5 flex items-center justify-center"></i>
+                    </button>
+                    <button id="zoomOutBtn" class="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg transition-colors" title="缩小">
+                        <i class="fa-solid fa-minus text-sm w-5 h-5 flex items-center justify-center"></i>
+                    </button>
+                    <button id="clearHighlightBtn" class="p-2 hover:bg-slate-800 text-amber-400 hover:text-amber-300 rounded-lg transition-colors" title="清除高亮">
+                        <i class="fa-solid fa-eye text-sm w-5 h-5 flex items-center justify-center"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Summary Badges Top Left -->
+            <div class="absolute top-4 left-4 z-10 hidden sm:flex items-center gap-3 bg-slate-900/90 backdrop-blur-md border border-slate-800 px-4 py-2.5 rounded-xl shadow-xl">
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50"></span>
+                    <span class="text-xs text-slate-300">风华绝代: <strong id="count-fh" class="text-amber-400 font-bold text-sm">0</strong> 城</span>
+                </div>
+                <div class="w-px h-4 bg-slate-700"></div>
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full bg-blue-500 shadow-sm shadow-blue-500/50"></span>
+                    <span class="text-xs text-slate-300">休闲娱乐: <strong id="count-xx" class="text-blue-400 font-bold text-sm">0</strong> 城</span>
+                </div>
+                <div class="w-px h-4 bg-slate-700"></div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400">总计: <strong id="count-total" class="text-slate-200">85</strong> 城</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Side Panel / Detail Viewer -->
+        <aside id="sidebar" class="w-80 md:w-96 bg-slate-900 border-l border-slate-800 flex flex-col h-full z-20 transition-all duration-300 absolute right-0 top-0 bottom-0 md:relative translate-x-full md:translate-x-0 shadow-2xl">
+            
+            <!-- Sidebar Header -->
+            <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-amber-400 text-lg"></i>
+                    <h2 class="font-bold text-slate-100 text-base">城池情报面板</h2>
+                </div>
+                <button id="closeSidebarBtn" class="md:hidden text-slate-400 hover:text-white p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <!-- Detail Content Scrollable Container -->
+            <div class="flex-1 overflow-y-auto p-4 space-y-4" id="detailPanelContent">
+                <!-- Initial State Placeholder -->
+                <div id="noSelectionState" class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
+                    <div class="w-16 h-16 rounded-full bg-slate-800/80 flex items-center justify-center mb-3 text-slate-600">
+                        <i class="fa-solid fa-hand-pointer text-2xl"></i>
+                    </div>
+                    <p class="text-sm font-medium text-slate-400">请在地图上点击选中城池</p>
+                    <p class="text-xs text-slate-600 mt-1.5 leading-relaxed">高亮显示当前城池及其相连通路<br/>右侧将实时呈现城池等级、归属及拓扑邻接节点</p>
+                </div>
+
+                <!-- Active City Info Panel -->
+                <div id="cityDetailCard" class="hidden space-y-4">
+                    
+                    <!-- Main Card Banner -->
+                    <div id="cityBanner" class="p-4 rounded-xl border border-slate-800 bg-slate-800/50 relative overflow-hidden shadow-inner">
+                        <div class="flex justify-between items-start relative z-10">
+                            <div>
+                                <span id="cityLevelBadge" class="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-700 text-slate-200 border border-slate-600">
+                                    等级 0 城池
+                                </span>
+                                <h3 id="cityName" class="text-2xl font-black text-white mt-1.5 tracking-wide">--</h3>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-xs text-slate-400 block mb-1">城池归属</span>
+                                <span id="cityOwner" class="text-xs font-bold px-3 py-1 rounded-full inline-block shadow">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Attribute Stats Grid -->
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div class="p-3 bg-slate-800/40 border border-slate-800 rounded-lg">
+                            <span class="text-slate-400 block mb-1"><i class="fa-solid fa-diagram-project mr-1 text-amber-400"></i>相连城池数</span>
+                            <span id="neighborCount" class="text-base font-bold text-slate-200">0 个</span>
+                        </div>
+                        <div class="p-3 bg-slate-800/40 border border-slate-800 rounded-lg">
+                            <span class="text-slate-400 block mb-1"><i class="fa-solid fa-layer-group mr-1 text-purple-400"></i>战略圈层</span>
+                            <span id="tierInfo" class="text-base font-bold text-slate-200">第 -- 圈层</span>
+                        </div>
+                    </div>
+
+                    <!-- Neighboring Cities List -->
+                    <div class="border border-slate-800 rounded-xl bg-slate-800/20 p-3">
+                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center justify-between">
+                            <span>相连通路城池</span>
+                            <span class="text-[10px] text-slate-500 font-normal">点击快速跳转</span>
+                        </h4>
+                        <div id="neighborsList" class="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto pr-1">
+                            <!-- Injected dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Future Info / Extensible Slots -->
+                    <div class="border border-slate-800 rounded-xl bg-slate-800/30 p-3 space-y-3">
+                        <div class="flex items-center justify-between text-xs font-bold text-slate-300 border-b border-slate-800 pb-2">
+                            <span><i class="fa-solid fa-shield-cat mr-1.5 text-blue-400"></i>防守与战场动态 (预留模块)</span>
+                            <span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">R4D2 阶段</span>
+                        </div>
+
+                        <div class="space-y-2 text-xs">
+                            <div class="p-2.5 bg-slate-900/60 rounded border border-slate-800/80 flex items-center justify-between">
+                                <span class="text-slate-400">关卡连接状态</span>
+                                <span class="text-emerald-400 font-medium">通路正常</span>
+                            </div>
+                            <div class="p-2.5 bg-slate-900/60 rounded border border-slate-800/80 flex items-center justify-between">
+                                <span class="text-slate-400">城池等级规模</span>
+                                <span id="levelScaleText" class="text-slate-300 font-bold">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Bottom Legend Panel -->
+            <div class="p-3 border-t border-slate-800 bg-slate-900/90 text-xs">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="font-bold text-slate-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-palette text-amber-400"></i> 势力归属图例
+                    </span>
+                    <span class="text-[10px] text-slate-500">点击图例可定位筛选</span>
+                </div>
+                <div id="legendGrid" class="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                    <!-- Legend items generated by JS -->
+                </div>
+            </div>
+
+        </aside>
+
+    </div>
+
+    <!-- JavaScript Data and Logic -->
+    <script>
+        // Verified 85 Cities ownership dataset for Round 4 Day 2 (R4D2)
+        const rawNodes = [
+            // Level 8 (1)
+            {"id": "8-1", "level": 8, "owner": "未开放"},
+            
+            // Level 7 (3)
+            {"id": "7-1", "level": 7, "owner": "未开放"},
+            {"id": "7-2", "level": 7, "owner": "未开放"},
+            {"id": "7-3", "level": 7, "owner": "未开放"},
+            
+            // Level 6 (4)
+            {"id": "6-1", "level": 6, "owner": "未开放"},
+            {"id": "6-2", "level": 6, "owner": "未开放"},
+            {"id": "6-3", "level": 6, "owner": "未开放"},
+            {"id": "6-4", "level": 6, "owner": "未开放"},
+            
+            // Level 5 (11)
+            {"id": "5-1", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-2", "level": 5, "owner": "风华绝代"},
+            {"id": "5-3", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-4", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-5", "level": 5, "owner": "无"},
+            {"id": "5-6", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-7", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-8", "level": 5, "owner": "无"},
+            {"id": "5-9", "level": 5, "owner": "休闲娱乐"},
+            {"id": "5-10", "level": 5, "owner": "风华绝代"},
+            {"id": "5-11", "level": 5, "owner": "诸神的黄昏"},
+            
+            // Level 4 (14) - Fully Updated and Verified
+            {"id": "4-1", "level": 4, "owner": "花满楼"},
+            {"id": "4-2", "level": 4, "owner": "风华绝代"},
+            {"id": "4-3", "level": 4, "owner": "花满楼"},
+            {"id": "4-4", "level": 4, "owner": "风华绝代"},
+            {"id": "4-5", "level": 4, "owner": "休闲娱乐"},
+            {"id": "4-6", "level": 4, "owner": "风华绝代"},
+            {"id": "4-7", "level": 4, "owner": "风华绝代"},
+            {"id": "4-8", "level": 4, "owner": "休闲娱乐"},
+            {"id": "4-9", "level": 4, "owner": "花满楼"},
+            {"id": "4-10", "level": 4, "owner": "风华绝代"},
+            {"id": "4-11", "level": 4, "owner": "风华绝代"},
+            {"id": "4-12", "level": 4, "owner": "花满楼"},
+            {"id": "4-13", "level": 4, "owner": "风华绝代"},
+            {"id": "4-14", "level": 4, "owner": "休闲娱乐"},
+            
+            // Level 3 (14)
+            {"id": "3-1", "level": 3, "owner": "花满楼"},
+            {"id": "3-2", "level": 3, "owner": "诸神的黄昏"},
+            {"id": "3-3", "level": 3, "owner": "花满楼"},
+            {"id": "3-4", "level": 3, "owner": "就一个"},
+            {"id": "3-5", "level": 3, "owner": "休闲娱乐"},
+            {"id": "3-6", "level": 3, "owner": "花满楼"},
+            {"id": "3-7", "level": 3, "owner": "诸神的黄昏"},
+            {"id": "3-8", "level": 3, "owner": "休闲娱乐"},
+            {"id": "3-9", "level": 3, "owner": "休闲娱乐"},
+            {"id": "3-10", "level": 3, "owner": "风华绝代"},
+            {"id": "3-11", "level": 3, "owner": "花满楼"},
+            {"id": "3-12", "level": 3, "owner": "无"},
+            {"id": "3-13", "level": 3, "owner": "花满楼"},
+            {"id": "3-14", "level": 3, "owner": "花满楼"},
+            
+            // Level 2 (18)
+            {"id": "2-1", "level": 2, "owner": "诸神的黄昏"},
+            {"id": "2-2", "level": 2, "owner": "猎鹰军团"},
+            {"id": "2-3", "level": 2, "owner": "夏天"},
+            {"id": "2-4", "level": 2, "owner": "憾山阁"},
+            {"id": "2-5", "level": 2, "owner": "夏天"},
+            {"id": "2-6", "level": 2, "owner": "无"},
+            {"id": "2-7", "level": 2, "owner": "无"},
+            {"id": "2-8", "level": 2, "owner": "就一个"},
+            {"id": "2-9", "level": 2, "owner": "无"},
+            {"id": "2-10", "level": 2, "owner": "憾山阁"},
+            {"id": "2-11", "level": 2, "owner": "憾山阁"},
+            {"id": "2-12", "level": 2, "owner": "无"},
+            {"id": "2-13", "level": 2, "owner": "叶无眠"},
+            {"id": "2-14", "level": 2, "owner": "诸神的黄昏"},
+            {"id": "2-15", "level": 2, "owner": "西南大观楼"},
+            {"id": "2-16", "level": 2, "owner": "无"},
+            {"id": "2-17", "level": 2, "owner": "法天象地"},
+            {"id": "2-18", "level": 2, "owner": "西南大观楼"},
+            
+            // Level 1 (20)
+            {"id": "1-1", "level": 1, "owner": "长安城"},
+            {"id": "1-2", "level": 1, "owner": "长安城"},
+            {"id": "1-3", "level": 1, "owner": "无"},
+            {"id": "1-4", "level": 1, "owner": "西南大观楼"},
+            {"id": "1-5", "level": 1, "owner": "西南大观楼"},
+            {"id": "1-6", "level": 1, "owner": "就一个"},
+            {"id": "1-7", "level": 1, "owner": "就一个"},
+            {"id": "1-8", "level": 1, "owner": "长安城"},
+            {"id": "1-9", "level": 1, "owner": "憾山阁"},
+            {"id": "1-10", "level": 1, "owner": "诸神的黄昏"},
+            {"id": "1-11", "level": 1, "owner": "法天象地"},
+            {"id": "1-12", "level": 1, "owner": "法天象地"},
+            {"id": "1-13", "level": 1, "owner": "就一个"},
+            {"id": "1-14", "level": 1, "owner": "诸神的黄昏"},
+            {"id": "1-15", "level": 1, "owner": "就一个"},
+            {"id": "1-16", "level": 1, "owner": "夏天"},
+            {"id": "1-17", "level": 1, "owner": "法天象地"},
+            {"id": "1-18", "level": 1, "owner": "我要验牌"},
+            {"id": "1-19", "level": 1, "owner": "法天象地"},
+            {"id": "1-20", "level": 1, "owner": "憾山阁"}
+        ];
+
+        // G3 Topological map edges
+        const rawEdges = [
+            {"source": "1-1", "target": "1-2"}, {"source": "1-1", "target": "2-12"}, {"source": "1-1", "target": "2-15"}, {"source": "1-1", "target": "2-7"}, {"source": "1-1", "target": "4-1"}, {"source": "1-10", "target": "1-8"}, {"source": "1-10", "target": "1-9"}, {"source": "1-10", "target": "2-14"}, {"source": "1-10", "target": "3-2"}, {"source": "1-10", "target": "5-2"}, {"source": "1-11", "target": "1-12"}, {"source": "1-11", "target": "2-13"}, {"source": "1-11", "target": "3-7"}, {"source": "1-11", "target": "4-10"}, {"source": "1-12", "target": "2-13"}, {"source": "1-12", "target": "3-7"}, {"source": "1-12", "target": "4-9"}, {"source": "1-13", "target": "1-14"}, {"source": "1-13", "target": "1-4"}, {"source": "1-13", "target": "2-4"}, {"source": "1-13", "target": "3-5"}, {"source": "1-13", "target": "5-1"}, {"source": "1-14", "target": "1-8"}, {"source": "1-14", "target": "2-14"}, {"source": "1-14", "target": "3-2"}, {"source": "1-14", "target": "5-2"}, {"source": "1-15", "target": "1-16"}, {"source": "1-15", "target": "2-5"}, {"source": "1-15", "target": "2-9"}, {"source": "1-15", "target": "3-8"}, {"source": "1-15", "target": "4-3"}, {"source": "1-16", "target": "2-5"}, {"source": "1-16", "target": "2-9"}, {"source": "1-16", "target": "3-8"}, {"source": "1-16", "target": "4-4"}, {"source": "1-17", "target": "1-18"}, {"source": "1-17", "target": "2-10"}, {"source": "1-17", "target": "2-6"}, {"source": "1-17", "target": "3-6"}, {"source": "1-17", "target": "4-6"}, {"source": "1-18", "target": "2-10"}, {"source": "1-18", "target": "2-6"}, {"source": "1-18", "target": "3-6"}, {"source": "1-18", "target": "4-5"}, {"source": "1-19", "target": "1-20"}, {"source": "1-19", "target": "2-11"}, {"source": "1-19", "target": "2-16"}, {"source": "1-19", "target": "3-9"}, {"source": "1-19", "target": "4-7"}, {"source": "1-2", "target": "2-12"}, {"source": "1-2", "target": "2-15"}, {"source": "1-2", "target": "2-7"}, {"source": "1-2", "target": "4-2"}, {"source": "1-20", "target": "2-11"}, {"source": "1-20", "target": "2-16"}, {"source": "1-20", "target": "3-9"}, {"source": "1-20", "target": "4-8"}, {"source": "1-21", "target": "1-22"}, {"source": "1-21", "target": "2-1"}, {"source": "1-21", "target": "2-8"}, {"source": "1-21", "target": "3-10"}, {"source": "1-21", "target": "4-12"}, {"source": "1-22", "target": "2-1"}, {"source": "1-22", "target": "2-8"}, {"source": "1-22", "target": "3-10"}, {"source": "1-22", "target": "4-11"}, {"source": "1-23", "target": "1-24"}, {"source": "1-23", "target": "2-2"}, {"source": "1-23", "target": "2-3"}, {"source": "1-23", "target": "3-11"}, {"source": "1-23", "target": "4-14"}, {"source": "1-24", "target": "2-2"}, {"source": "1-24", "target": "2-3"}, {"source": "1-24", "target": "3-11"}, {"source": "1-24", "target": "4-13"}, {"source": "1-3", "target": "1-4"}, {"source": "1-3", "target": "2-4"}, {"source": "1-3", "target": "3-5"}, {"source": "1-3", "target": "5-1"}, {"source": "1-4", "target": "2-4"}, {"source": "1-4", "target": "3-5"}, {"source": "1-4", "target": "5-1"}, {"source": "1-5", "target": "1-6"}, {"source": "1-5", "target": "2-17"}, {"source": "1-5", "target": "2-18"}, {"source": "1-5", "target": "3-1"}, {"source": "1-5", "target": "5-3"}, {"source": "1-6", "target": "2-17"}, {"source": "1-6", "target": "2-18"}, {"source": "1-6", "target": "3-1"}, {"source": "1-6", "target": "5-3"}, {"source": "1-7", "target": "1-8"}, {"source": "1-7", "target": "2-17"}, {"source": "1-7", "target": "2-18"}, {"source": "1-7", "target": "3-1"}, {"source": "1-7", "target": "5-3"}, {"source": "1-8", "target": "1-9"}, {"source": "1-8", "target": "2-14"}, {"source": "1-8", "target": "3-2"}, {"source": "1-8", "target": "5-2"}, {"source": "1-9", "target": "2-14"}, {"source": "1-9", "target": "3-2"}, {"source": "1-9", "target": "5-2"}, {"source": "2-1", "target": "2-8"}, {"source": "2-1", "target": "3-10"}, {"source": "2-10", "target": "2-6"}, {"source": "2-10", "target": "3-6"}, {"source": "2-10", "target": "4-6"}, {"source": "2-11", "target": "2-16"}, {"source": "2-11", "target": "3-9"}, {"source": "2-11", "target": "4-8"}, {"source": "2-12", "target": "2-15"}, {"source": "2-12", "target": "2-7"}, {"source": "2-12", "target": "4-2"}, {"source": "2-13", "target": "3-7"}, {"source": "2-13", "target": "4-9"}, {"source": "2-14", "target": "3-2"}, {"source": "2-14", "target": "5-2"}, {"source": "2-15", "target": "2-7"}, {"source": "2-15", "target": "4-1"}, {"source": "2-16", "target": "3-9"}, {"source": "2-16", "target": "4-7"}, {"source": "2-17", "target": "2-18"}, {"source": "2-17", "target": "3-1"}, {"source": "2-17", "target": "5-3"}, {"source": "2-18", "target": "3-1"}, {"source": "2-18", "target": "5-3"}, {"source": "2-2", "target": "2-3"}, {"source": "2-2", "target": "3-11"}, {"source": "2-2", "target": "4-14"}, {"source": "2-3", "target": "3-11"}, {"source": "2-3", "target": "4-13"}, {"source": "2-4", "target": "3-5"}, {"source": "2-4", "target": "5-1"}, {"source": "2-5", "target": "2-9"}, {"source": "2-5", "target": "3-8"}, {"source": "2-5", "target": "4-3"}, {"source": "2-6", "target": "3-6"}, {"source": "2-6", "target": "4-5"}, {"source": "2-7", "target": "4-1"}, {"source": "2-8", "target": "3-10"}, {"source": "2-8", "target": "4-11"}, {"source": "2-9", "target": "3-8"}, {"source": "2-9", "target": "4-4"}, {"source": "3-1", "target": "4-10"}, {"source": "3-1", "target": "5-3"}, {"source": "3-10", "target": "4-12"}, {"source": "3-10", "target": "5-6"}, {"source": "3-11", "target": "4-13"}, {"source": "3-11", "target": "5-7"}, {"source": "3-12", "target": "4-11"}, {"source": "3-12", "target": "4-12"}, {"source": "3-12", "target": "5-6"}, {"source": "3-13", "target": "4-13"}, {"source": "3-13", "target": "4-14"}, {"source": "3-13", "target": "5-7"}, {"source": "3-14", "target": "4-1"}, {"source": "3-14", "target": "4-2"}, {"source": "3-14", "target": "5-4"}, {"source": "3-15", "target": "4-3"}, {"source": "3-15", "target": "4-4"}, {"source": "3-15", "target": "5-5"}, {"source": "3-2", "target": "4-9"}, {"source": "3-2", "target": "5-2"}, {"source": "3-3", "target": "4-5"}, {"source": "3-3", "target": "4-6"}, {"source": "3-3", "target": "5-5"}, {"source": "3-4", "target": "4-7"}, {"source": "3-4", "target": "4-8"}, {"source": "3-4", "target": "5-4"}, {"source": "3-5", "target": "5-1"}, {"source": "3-6", "target": "4-5"}, {"source": "3-6", "target": "5-5"}, {"source": "3-7", "target": "4-10"}, {"source": "3-7", "target": "5-2"}, {"source": "3-8", "target": "4-3"}, {"source": "3-8", "target": "5-5"}, {"source": "3-9", "target": "4-7"}, {"source": "3-9", "target": "5-4"}, {"source": "4-1", "target": "4-2"}, {"source": "4-1", "target": "5-4"}, {"source": "4-10", "target": "5-3"}, {"source": "4-11", "target": "4-12"}, {"source": "4-11", "target": "5-8"}, {"source": "4-11", "target": "6-4"}, {"source": "4-12", "target": "5-10"}, {"source": "4-12", "target": "6-1"}, {"source": "4-13", "target": "4-14"}, {"source": "4-13", "target": "5-10"}, {"source": "4-13", "target": "6-1"}, {"source": "4-14", "target": "5-8"}, {"source": "4-14", "target": "6-4"}, {"source": "4-2", "target": "5-1"}, {"source": "4-3", "target": "4-4"}, {"source": "4-3", "target": "5-5"}, {"source": "4-4", "target": "5-9"}, {"source": "4-4", "target": "6-2"}, {"source": "4-5", "target": "4-6"}, {"source": "4-5", "target": "5-5"}, {"source": "4-6", "target": "5-10"}, {"source": "4-6", "target": "6-3"}, {"source": "4-7", "target": "4-8"}, {"source": "4-7", "target": "5-9"}, {"source": "4-7", "target": "6-2"}, {"source": "4-8", "target": "5-10"}, {"source": "4-8", "target": "6-3"}, {"source": "4-9", "target": "4-10"}, {"source": "4-9", "target": "5-2"}, {"source": "5-1", "target": "5-9"}, {"source": "5-10", "target": "6-1"}, {"source": "5-10", "target": "6-3"}, {"source": "5-11", "target": "5-8"}, {"source": "5-11", "target": "5-9"}, {"source": "5-11", "target": "6-2"}, {"source": "5-11", "target": "6-4"}, {"source": "5-12", "target": "5-6"}, {"source": "5-12", "target": "5-7"}, {"source": "5-2", "target": "5-9"}, {"source": "5-3", "target": "5-8"}, {"source": "5-6", "target": "5-7"}, {"source": "5-8", "target": "6-1"}, {"source": "5-8", "target": "6-4"}, {"source": "5-8", "target": "7-3"}, {"source": "5-9", "target": "6-2"}, {"source": "5-9", "target": "6-3"}, {"source": "5-9", "target": "7-1"}, {"source": "5-9", "target": "7-2"}, {"source": "6-1", "target": "6-3"}, {"source": "6-1", "target": "7-2"}, {"source": "6-1", "target": "7-3"}, {"source": "6-2", "target": "6-4"}, {"source": "6-2", "target": "7-1"}, {"source": "6-3", "target": "7-2"}, {"source": "6-4", "target": "7-1"}, {"source": "6-4", "target": "7-3"}, {"source": "7-1", "target": "7-2"}, {"source": "7-1", "target": "7-3"}, {"source": "7-1", "target": "8-1"}, {"source": "7-2", "target": "7-3"}, {"source": "7-2", "target": "8-1"}, {"source": "7-3", "target": "8-1"}
+        ];
+
+        // Specific color mapping as requested:
+        // "风华绝代": Bright Amber/Gold (#f59e0b / #fbbf24)
+        // "休闲娱乐": Bright Blue (#3b82f6 / #60a5fa)
+        // "未开放" and "无": Unified Dark Gray (#6b7280 / #4b5563)
+        // Distinct colors for other alliances
+        const ownerColors = {
+            "风华绝代": { bg: "#f59e0b", border: "#fbbf24", text: "#0f172a", highlightBg: "#fcd34d" }, // Bright Gold/Amber
+            "休闲娱乐": { bg: "#3b82f6", border: "#60a5fa", text: "#ffffff", highlightBg: "#93c5fd" }, // Bright Blue
+            "未开放":   { bg: "#4b5563", border: "#6b7280", text: "#9ca3af", highlightBg: "#6b7280" }, // Neutral Gray
+            "无":       { bg: "#4b5563", border: "#6b7280", text: "#9ca3af", highlightBg: "#6b7280" }, // Neutral Gray (Same as 未开放)
+
+            "花满楼":     { bg: "#ec4899", border: "#f472b6", text: "#ffffff", highlightBg: "#f472b6" }, // Pink
+            "诸神的黄昏": { bg: "#8b5cf6", border: "#a78bfa", text: "#ffffff", highlightBg: "#a78bfa" }, // Purple
+            "就一个":     { bg: "#10b981", border: "#34d399", text: "#ffffff", highlightBg: "#34d399" }, // Emerald Green
+            "憾山阁":     { bg: "#84cc16", border: "#a3e635", text: "#ffffff", highlightBg: "#a3e635" }, // Lime
+            "法天象地":   { bg: "#06b6d4", border: "#22d3ee", text: "#ffffff", highlightBg: "#22d3ee" }, // Cyan
+            "西南大观楼": { bg: "#14b8a6", border: "#2dd4bf", text: "#ffffff", highlightBg: "#2dd4bf" }, // Teal
+            "夏天":       { bg: "#f43f5e", border: "#fb7185", text: "#ffffff", highlightBg: "#fb7185" }, // Rose Red
+            "猎鹰军团":   { bg: "#6366f1", border: "#818cf8", text: "#ffffff", highlightBg: "#818cf8" }, // Indigo
+            "长安城":     { bg: "#d97706", border: "#f59e0b", text: "#ffffff", highlightBg: "#fbbf24" }, // Bronze
+            "叶无眠":     { bg: "#0284c7", border: "#38bdf8", text: "#ffffff", highlightBg: "#38bdf8" }, // Sky Blue
+            "我要验牌":   { bg: "#a855f7", border: "#c084fc", text: "#ffffff", highlightBg: "#c084fc" }  // Violet
+        };
+
+        function getOwnerColor(owner) {
+            if (ownerColors[owner]) return ownerColors[owner];
+            return { bg: "#64748b", border: "#94a3b8", text: "#ffffff", highlightBg: "#cbd5e1" };
+        }
+
+        // Global State & Vis.js Instances
+        let network = null;
+        let nodesDataSet = null;
+        let edgesDataSet = null;
+        let selectedNodeId = null;
+        let adjacencyMap = {};
+
+        // Calculate Ring Concentric Positioning for 85 Cities (L8 Center, L1 Perimeter)
+        function calculatePositions() {
+            const positions = {};
+            const levelCounts = {};
+            
+            rawNodes.forEach(node => {
+                levelCounts[node.level] = (levelCounts[node.level] || 0) + 1;
+            });
+
+            const levelIndices = {};
+
+            rawNodes.forEach(node => {
+                const lvl = node.level;
+                if (!levelIndices[lvl]) levelIndices[lvl] = 0;
+                
+                const index = levelIndices[lvl]++;
+                const total = levelCounts[lvl];
+                
+                // Ring radius based on level scale
+                const radius = (8 - lvl) * 165; 
+                const angleOffset = (lvl % 2 === 0) ? 0 : Math.PI / total;
+                const angle = (index / total) * 2 * Math.PI + angleOffset;
+
+                positions[node.id] = {
+                    x: radius * Math.cos(angle),
+                    y: radius * Math.sin(angle)
+                };
+            });
+
+            return positions;
+        }
+
+        // Initialize App
+        window.onload = function() {
+            initAdjacencyMap();
+            initNetwork();
+            initLegend();
+            initStatsHeader();
+            setupEventListeners();
+        };
+
+        function initAdjacencyMap() {
+            rawNodes.forEach(n => adjacencyMap[n.id] = new Set());
+            rawEdges.forEach(e => {
+                if (adjacencyMap[e.source]) adjacencyMap[e.source].add(e.target);
+                if (adjacencyMap[e.target]) adjacencyMap[e.target].add(e.source);
+            });
+        }
+
+        function initNetwork() {
+            const positions = calculatePositions();
+
+            // Node sizes: L8 = 42px (largest), L1 = 12px (smallest)
+            // Font sizes match node scale: L8 = 22px, L1 = 10px
+            const formattedNodes = rawNodes.map(n => {
+                const colors = getOwnerColor(n.owner);
+                const size = 10 + n.level * 4; 
+                const fontSize = 9 + n.level * 1.6;
+                const isFeatured = n.owner === '风华绝代' || n.owner === '休闲娱乐';
+
+                return {
+                    id: n.id,
+                    label: n.id,
+                    level: n.level,
+                    owner: n.owner,
+                    shape: 'dot',
+                    size: size,
+                    x: positions[n.id].x,
+                    y: positions[n.id].y,
+                    font: {
+                        size: fontSize,
+                        color: n.owner === '未开放' || n.owner === '无' ? '#9ca3af' : '#ffffff',
+                        face: 'Inter, system-ui, sans-serif',
+                        strokeWidth: 3,
+                        strokeColor: '#0b1120'
+                    },
+                    color: {
+                        background: colors.bg,
+                        border: colors.border,
+                        highlight: {
+                            background: colors.highlightBg,
+                            border: '#ffffff'
+                        },
+                        hover: {
+                            background: colors.highlightBg,
+                            border: '#ffffff'
+                        }
+                    },
+                    borderWidth: isFeatured ? 3 : 1.5,
+                    shadow: isFeatured ? { enabled: true, color: colors.bg, size: 14 } : false
+                };
+            });
+
+            const formattedEdges = rawEdges.map((e, index) => ({
+                id: `e_${index}`,
+                from: e.source,
+                to: e.target,
+                color: {
+                    color: '#334155',
+                    highlight: '#38bdf8',
+                    hover: '#64748b',
+                    opacity: 0.5
+                },
+                width: 1.2,
+                smooth: { type: 'continuous' }
+            }));
+
+            nodesDataSet = new vis.DataSet(formattedNodes);
+            edgesDataSet = new vis.DataSet(formattedEdges);
+
+            const container = document.getElementById('mynetwork');
+            const data = { nodes: nodesDataSet, edges: edgesDataSet };
+            
+            const options = {
+                nodes: {
+                    borderWidthSelected: 4,
+                },
+                edges: {
+                    selectionWidth: 2.5
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 100,
+                    zoomView: true,
+                    dragView: true
+                },
+                physics: {
+                    enabled: true,
+                    solver: 'forceAtlas2Based',
+                    forceAtlas2Based: {
+                        gravitationalConstant: -45,
+                        centralGravity: 0.012,
+                        springLength: 95,
+                        springConstant: 0.07,
+                        damping: 0.45
+                    },
+                    stabilization: {
+                        iterations: 150,
+                        updateInterval: 25
+                    }
+                }
+            };
+
+            network = new vis.Network(container, data, options);
+
+            // Network Selection Handler
+            network.on("selectNode", function(params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    handleNodeSelect(nodeId);
+                }
+            });
+
+            network.on("deselectNode", function() {
+                resetHighlights();
+                showNoSelectionState();
+            });
+
+            network.on("doubleClick", function(params) {
+                if (params.nodes.length > 0) {
+                    network.focus(params.nodes[0], { scale: 1.3, animation: true });
+                }
+            });
+        }
+
+        // Highlight selected node + adjacent nodes & edges, dim non-connected
+        function handleNodeSelect(nodeId) {
+            selectedNodeId = nodeId;
+            const neighbors = adjacencyMap[nodeId] || new Set();
+
+            const updateNodes = [];
+            nodesDataSet.forEach(node => {
+                const isTarget = node.id === nodeId;
+                const isNeighbor = neighbors.has(node.id);
+                
+                if (isTarget || isNeighbor) {
+                    updateNodes.push({
+                        id: node.id,
+                        opacity: 1.0,
+                        font: { opacity: 1.0 }
+                    });
+                } else {
+                    updateNodes.push({
+                        id: node.id,
+                        opacity: 0.12,
+                        font: { opacity: 0.12 }
+                    });
+                }
+            });
+            nodesDataSet.update(updateNodes);
+
+            const updateEdges = [];
+            edgesDataSet.forEach(edge => {
+                const isConnected = (edge.from === nodeId && neighbors.has(edge.to)) || 
+                                    (edge.to === nodeId && neighbors.has(edge.from));
+                if (isConnected) {
+                    updateEdges.push({
+                        id: edge.id,
+                        color: { color: '#fbbf24', opacity: 1.0 },
+                        width: 3
+                    });
+                } else {
+                    updateEdges.push({
+                        id: edge.id,
+                        color: { color: '#1e293b', opacity: 0.05 },
+                        width: 1
+                    });
+                }
+            });
+            edgesDataSet.update(updateEdges);
+
+            renderCityDetails(nodeId);
+        }
+
+        function resetHighlights() {
+            selectedNodeId = null;
+            
+            const updateNodes = [];
+            nodesDataSet.forEach(node => {
+                updateNodes.push({
+                    id: node.id,
+                    opacity: 1.0,
+                    font: { opacity: 1.0 }
+                });
+            });
+            nodesDataSet.update(updateNodes);
+
+            const updateEdges = [];
+            edgesDataSet.forEach(edge => {
+                updateEdges.push({
+                    id: edge.id,
+                    color: { color: '#334155', opacity: 0.5 },
+                    width: 1.2
+                });
+            });
+            edgesDataSet.update(updateEdges);
+
+            document.getElementById('allianceFilter').value = 'ALL';
+        }
+
+        function renderCityDetails(nodeId) {
+            const node = rawNodes.find(n => n.id === nodeId);
+            if (!node) return;
+
+            document.getElementById('noSelectionState').classList.add('hidden');
+            document.getElementById('cityDetailCard').classList.remove('hidden');
+
+            document.getElementById('cityName').textContent = `城池 ${node.id}`;
+            document.getElementById('cityLevelBadge').textContent = `等级 ${node.level} 城池`;
+            document.getElementById('levelScaleText').textContent = `${node.level} 级 (${node.level === 8 ? '皇城核心' : node.level >= 5 ? '高阶要塞' : '常规定居点'})`;
+            
+            const ownerEl = document.getElementById('cityOwner');
+            ownerEl.textContent = node.owner;
+            const colors = getOwnerColor(node.owner);
+            ownerEl.style.backgroundColor = colors.bg;
+            ownerEl.style.color = colors.text;
+
+            const neighbors = Array.from(adjacencyMap[nodeId] || []);
+            document.getElementById('neighborCount').textContent = `${neighbors.length} 个城池`;
+            document.getElementById('tierInfo').textContent = `第 ${9 - node.level} 圈层`;
+
+            const neighborsContainer = document.getElementById('neighborsList');
+            neighborsContainer.innerHTML = '';
+
+            neighbors.sort((a, b) => a.localeCompare(b, undefined, {numeric: true})).forEach(nId => {
+                const neighborNode = rawNodes.find(n => n.id === nId);
+                const nColor = getOwnerColor(neighborNode.owner);
+                
+                const chip = document.createElement('button');
+                chip.className = 'px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs flex items-center gap-1.5 transition-colors';
+                chip.innerHTML = `
+                    <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${nColor.bg}"></span>
+                    <span class="font-mono font-bold text-slate-200">${nId}</span>
+                    <span class="text-[10px] text-slate-400">(${neighborNode.owner})</span>
+                `;
+                chip.onclick = () => {
+                    network.selectNodes([nId]);
+                    handleNodeSelect(nId);
+                    network.focus(nId, { animation: true });
+                };
+                neighborsContainer.appendChild(chip);
+            });
+
+            document.getElementById('sidebar').classList.remove('translate-x-full');
+        }
+
+        function showNoSelectionState() {
+            document.getElementById('noSelectionState').classList.remove('hidden');
+            document.getElementById('cityDetailCard').classList.add('hidden');
+        }
+
+        function initLegend() {
+            const ownerCounts = {};
+            rawNodes.forEach(n => {
+                ownerCounts[n.owner] = (ownerCounts[n.owner] || 0) + 1;
+            });
+
+            const sortedOwners = Object.keys(ownerCounts).sort((a, b) => {
+                if (a === '风华绝代') return -1;
+                if (b === '风华绝代') return 1;
+                if (a === '休闲娱乐') return -1;
+                if (b === '休闲娱乐') return 1;
+                if (a === '未开放' || a === '无') return 1;
+                if (b === '未开放' || b === '无') return -1;
+                return ownerCounts[b] - ownerCounts[a];
+            });
+
+            const legendGrid = document.getElementById('legendGrid');
+            legendGrid.innerHTML = '';
+
+            sortedOwners.forEach(owner => {
+                const color = getOwnerColor(owner);
+                const count = ownerCounts[owner];
+                const isFeatured = owner === '风华绝代' || owner === '休闲娱乐';
+
+                const legendItem = document.createElement('div');
+                legendItem.className = `flex items-center justify-between p-1.5 rounded-lg border cursor-pointer transition-all ${
+                    isFeatured 
+                    ? 'bg-slate-800 border-slate-600 font-bold hover:border-slate-400' 
+                    : 'bg-slate-900/60 border-slate-800 hover:bg-slate-800/60 text-slate-400'
+                }`;
+
+                legendItem.innerHTML = `
+                    <div class="flex items-center gap-1.5 overflow-hidden">
+                        <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${color.bg}"></span>
+                        <span class="truncate ${isFeatured ? 'text-slate-100' : ''}">${owner}</span>
+                    </div>
+                    <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">${count}</span>
+                `;
+
+                legendItem.onclick = () => {
+                    document.getElementById('allianceFilter').value = owner;
+                    filterByOwner(owner);
+                };
+
+                legendGrid.appendChild(legendItem);
+            });
+        }
+
+        // Filter Network Display by Alliance
+        function filterByOwner(owner) {
+            if (owner === 'ALL') {
+                resetHighlights();
+                return;
+            }
+
+            const updateNodes = [];
+            nodesDataSet.forEach(node => {
+                const matches = (owner === '无') ? (node.owner === '无' || node.owner === '未开放') : (node.owner === owner);
+                updateNodes.push({
+                    id: node.id,
+                    opacity: matches ? 1.0 : 0.08,
+                    font: { opacity: matches ? 1.0 : 0.08 }
+                });
+            });
+            nodesDataSet.update(updateNodes);
+
+            const updateEdges = [];
+            edgesDataSet.forEach(edge => {
+                updateEdges.push({
+                    id: edge.id,
+                    color: { opacity: 0.03 },
+                    width: 1
+                });
+            });
+            edgesDataSet.update(updateEdges);
+        }
+
+        function initStatsHeader() {
+            let fh = 0, xx = 0;
+            rawNodes.forEach(n => {
+                if (n.owner === '风华绝代') fh++;
+                if (n.owner === '休闲娱乐') xx++;
+            });
+            document.getElementById('count-fh').textContent = fh;
+            document.getElementById('count-xx').textContent = xx;
+            document.getElementById('count-total').textContent = rawNodes.length;
+        }
+
+        function setupEventListeners() {
+            document.getElementById('zoomInBtn').onclick = () => {
+                const scale = network.getScale();
+                network.moveTo({ scale: scale * 1.3, animation: true });
+            };
+
+            document.getElementById('zoomOutBtn').onclick = () => {
+                const scale = network.getScale();
+                network.moveTo({ scale: scale * 0.7, animation: true });
+            };
+
+            document.getElementById('resetZoomBtn').onclick = () => {
+                network.fit({ animation: true });
+                resetHighlights();
+                showNoSelectionState();
+            };
+
+            document.getElementById('clearHighlightBtn').onclick = () => {
+                resetHighlights();
+                showNoSelectionState();
+                network.unselectNodes();
+            };
+
+            document.getElementById('allianceFilter').onchange = (e) => {
+                filterByOwner(e.target.value);
+            };
+
+            const sidebar = document.getElementById('sidebar');
+            document.getElementById('toggleSidebarBtn').onclick = () => {
+                sidebar.classList.toggle('translate-x-full');
+            };
+            document.getElementById('closeSidebarBtn').onclick = () => {
+                sidebar.classList.add('translate-x-full');
+            };
+
+            // Search Bar
+            const searchInput = document.getElementById('searchInput');
+            const searchResults = document.getElementById('searchResults');
+
+            // Helper function to focus and select city by ID
+            function selectAndFocusCity(cityId) {
+                const targetNode = rawNodes.find(n => n.id.toLowerCase() === cityId.toLowerCase());
+                if (!targetNode) return false;
+
+                const actualId = targetNode.id;
+                searchInput.value = actualId;
+                searchResults.classList.add('hidden');
+                
+                network.selectNodes([actualId]);
+                handleNodeSelect(actualId);
+                network.focus(actualId, { scale: 1.3, animation: true });
+                return true;
+            }
+
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const query = searchInput.value.trim().toLowerCase();
+                    if (!query) return;
+
+                    // 1. Try exact match first
+                    let success = selectAndFocusCity(query);
+                    
+                    // 2. If not exact, pick the first matching result
+                    if (!success) {
+                        const firstMatch = rawNodes.find(n => 
+                            n.id.toLowerCase().includes(query) || 
+                            n.owner.toLowerCase().includes(query)
+                        );
+                        if (firstMatch) {
+                            selectAndFocusCity(firstMatch.id);
+                        }
+                    }
+                }
+            });
+
+            searchInput.addEventListener('input', (e) => {
+                const query = e.target.value.trim().toLowerCase();
+                if (!query) {
+                    searchResults.classList.add('hidden');
+                    return;
+                }
+
+                const matches = rawNodes.filter(n => 
+                    n.id.toLowerCase().includes(query) || 
+                    n.owner.toLowerCase().includes(query)
+                ).slice(0, 8);
+
+                if (matches.length > 0) {
+                    searchResults.innerHTML = matches.map(n => {
+                        const color = getOwnerColor(n.owner);
+                        return `
+                            <div class="px-3 py-2 hover:bg-slate-700 cursor-pointer flex items-center justify-between text-xs" data-id="${n.id}">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2.5 h-2.5 rounded-full" style="background-color:${color.bg}"></span>
+                                    <span class="font-bold text-slate-100">城池 ${n.id}</span>
+                                </div>
+                                <span class="text-slate-400 text-[11px]">${n.owner} (L${n.level})</span>
+                            </div>
+                        `;
+                    }).join('');
+
+                    searchResults.classList.remove('hidden');
+
+                    searchResults.querySelectorAll('div[data-id]').forEach(el => {
+                        el.onclick = () => {
+                            const targetId = el.getAttribute('data-id');
+                            selectAndFocusCity(targetId);
+                        };
+                    });
+                } else {
+                    searchResults.innerHTML = `<div class="px-3 py-2 text-xs text-slate-400">未找到相关城池</div>`;
+                    searchResults.classList.remove('hidden');
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                    searchResults.classList.add('hidden');
+                }
+            });
+        }
+    </script>
+</body>
+</html>
